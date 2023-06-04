@@ -39,18 +39,17 @@ type ExampleReply struct {
 }
 
 type RequestArgs struct {
-	req_type ReqType
-	task_seq int // REPORT_RESULT 时使用
-	msg      string
+	RequestType ReqType
+	TaskSeq     int // REPORT_RESULT 时使用
+	Msg         string
 }
 
 type Reply struct {
-	rep_type  RepType
-	task_seq  int
-	file_path string
+	ReportType RepType
+	TaskSeq    int
+	NReduce    int
+	FilePath   string
 }
-
-// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
