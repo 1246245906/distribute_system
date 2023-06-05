@@ -45,10 +45,11 @@ type RequestArgs struct {
 }
 
 type Reply struct {
-	ReportType RepType
-	TaskSeq    int
-	NReduce    int
-	FilePath   string
+	ReplayType  RepType
+	TaskId      int
+	NReduce     int
+	FilePath    string
+	ReduceInput []string
 }
 
 // Cook up a unique-ish UNIX-domain socket name

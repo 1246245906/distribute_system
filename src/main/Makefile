@@ -6,4 +6,8 @@ coordinator:
 worker:
 	go run mrworker.go wc.so
 
+clean:
+	rm -f mr-out-*
 
+test:
+	cat mr-out-* | sort | more

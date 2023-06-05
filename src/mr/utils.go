@@ -1,22 +1,52 @@
 package mr
 
 import (
-	"fmt"
+	"encoding/json"
+	"errors"
 	"os"
 )
+
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 func ns2s(t int64) int64 {
 	return t / 1e9
 }
 
-func WriteKV2File(kvs []KeyValue, file_path string) {
+func WriteKV2File(kvs []KeyValue, file_path string) error {
 	ofile, err := os.Create(file_path)
 	if err != nil {
-		fmt.Printf("output file %s create faild\n", file_path)
+		return errors.New("output file create faild")
 	} else {
+		defer ofile.Close()
+		enc := json.NewEncoder(ofile)
 		for _, kv := range kvs {
-			fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
+			// todo : err process
+			enc.Encode(&kv)
 		}
-		fmt.Printf("output file %s write succ!\n", file_path)
+		return nil
 	}
+}
+
+func ReadKVFromFile(file_path string) ([]KeyValue, error) {
+	ofile, err := os.Open(file_path)
+	kvs := []KeyValue{}
+	if err != nil {
+		return []KeyValue{}, errors.New("output file create faild")
+	} else {
+		defer ofile.Close()
+		dec := json.NewDecoder(ofile)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kvs = append(kvs, kv)
+		}
+	}
+	return kvs, nil
 }
