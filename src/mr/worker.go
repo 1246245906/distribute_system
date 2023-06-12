@@ -49,7 +49,6 @@ func DoMap(file_path string, mapf func(string, string) []KeyValue) []KeyValue {
 	if err != nil {
 		log.Fatalf("cannot read %v", file_path)
 	}
-	fmt.Printf("[Worker][MAP]: %s is beginning!\n", file_path)
 	kva := mapf(file_path, string(content))
 	fmt.Printf("[Worker][MAP]: %s map succ!\n", file_path)
 	return kva
@@ -107,8 +106,7 @@ func ReportMapResult(task_id int, out_dir string) {
 	ok := call("Coordinator.AssignTask", &args, &reply)
 	// todo: error process
 	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("report success!\n")
+		// fmt.Printf("report success!\n")
 	} else {
 		fmt.Printf("call failed!\n")
 	}
@@ -118,10 +116,8 @@ func ReportReduceResult(task_id int, ofilepath string) {
 	args := RequestArgs{REPORT_RESULT, task_id, ofilepath}
 	reply := Reply{}
 	ok := call("Coordinator.AssignTask", &args, &reply)
-	// todo: error process
 	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("[reduce] report success!\n")
+		// fmt.Printf("[reduce] report success!\n")
 	} else {
 		fmt.Printf("[reduce] report failed!\n")
 	}
@@ -141,7 +137,6 @@ Loop:
 			// todo:错误处理
 			err := DoHashSplit(intermediate, task_id, nReduce, output_file_dir)
 			if err == nil {
-				fmt.Printf("[map][reduce] task id %d start report!\n", task_id)
 				ReportMapResult(task_id, output_file_dir)
 			} else {
 				fmt.Printf("[map][reduce] task id %d faild, do not report!\n", task_id)
@@ -152,9 +147,14 @@ Loop:
 			for _, ri := range reduce_inputs {
 				kvs, err := ReadKVFromFile(ri)
 				if err != nil {
-					continue Loop
+					fmt.Printf("[REDUCE][ERR] file %s read faild!\n", ri)
+				} else {
+					reduce_kvs = append(reduce_kvs, kvs...)
 				}
-				reduce_kvs = append(reduce_kvs, kvs...)
+			}
+			if len(reduce_kvs) <= 0 {
+				ReportReduceResult(task_id, "")
+				continue Loop
 			}
 			ofilepath := DoReduce(reduce_kvs, task_id, reducef)
 			for _, ri := range reduce_inputs {

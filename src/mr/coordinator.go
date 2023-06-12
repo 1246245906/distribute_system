@@ -69,7 +69,7 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func (c *Coordinator) get_timeout_filepath() (string, error) {
 	for task_seq, task := range c.in_progress_map_tasks {
-		if ns2s(time.Now().UnixNano()-task.time_stamp) > 10 {
+		if ns2s(time.Now().UnixNano()-task.time_stamp) > 15 {
 			// todo: 这里直接 delete 掉会不会导致task.filepath失效呢？先这样，有问题再排查
 			delete(c.in_progress_map_tasks, task_seq)
 			return task.file_path, nil
@@ -80,7 +80,7 @@ func (c *Coordinator) get_timeout_filepath() (string, error) {
 
 func (c *Coordinator) get_timeout_task() ([]string, error) {
 	for task_seq, task := range c.running_reduce_tasks {
-		if ns2s(time.Now().UnixNano()-task.time_stamp) > 10 {
+		if ns2s(time.Now().UnixNano()-task.time_stamp) > 15 {
 			delete(c.running_reduce_tasks, task_seq)
 			return task.input, nil
 		}
@@ -167,7 +167,6 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 				return nil
 			}
 			out_file_path := args.Msg
-			fmt.Printf("[MAP]: %s is completed, out_path is %s!\n", c.in_progress_map_tasks[completed_task_seq].file_path, out_file_path)
 			delete(c.in_progress_map_tasks, completed_task_seq)
 			taskout := MapOutput{completed_task_seq, out_file_path}
 			c.map_outputs = append(c.map_outputs, taskout)
@@ -176,6 +175,7 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 				// 先将要的数据结构准备好
 				c.prepare_reduce_input()
 				c.cond = Reduce
+				fmt.Printf("[coor] switch to reduce!\n")
 			}
 		} else if c.cond == Reduce {
 			completed_task_seq := args.TaskSeq
@@ -188,6 +188,7 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 			c.reduce_outputs = append(c.reduce_outputs, out_file_path)
 			if len(c.reduce_inputs) == 0 && len(c.running_reduce_tasks) == 0 {
 				// 收集reduce所有输出，重新命名
+				fmt.Printf("[coor] switch to done!")
 				c.cond = Done
 			}
 		}
