@@ -3,7 +3,6 @@ package mr
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -39,7 +38,10 @@ func WriteKV2File(kvs []KeyValue, file_path string) error {
 	// 感觉需要加文件锁
 	err = os.Rename(tmpfile.Name(), file_path)
 	if err != nil {
-		fmt.Print("zhc--------" + err.Error() + "\n")
+		err2 := os.Remove(tmpfile.Name())
+		if err2 != nil {
+			return err2
+		}
 	}
 	return err
 }

@@ -2,7 +2,6 @@ package mr
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +14,8 @@ import (
 )
 
 type Condition int
+
+var coor_logger = NewLogger("/Users/zhc/projects/6.5840/src/mr/coordinator.json")
 
 const (
 	Start Condition = iota
@@ -91,10 +92,6 @@ func (c *Coordinator) get_timeout_task() ([]string, error) {
 
 func (c *Coordinator) prepare_reduce_input() {
 	for _, mout := range c.map_outputs {
-		// for i := 0; i < c.nReduce; i += 1 {
-		// 	mr_intermedia_path := filepath.Join(mout.map_output_dir, fmt.Sprintf("mr-out-%d-%d", mout.task_seq, i))
-		// 	c.reduce_inputs[i] = append(c.reduce_inputs[i], mr_intermedia_path)
-		// }
 		t := strings.Split(mout, "-")
 		Y, err := strconv.Atoi(t[len(t)-1])
 		if err != nil {
@@ -178,7 +175,7 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 				// 先将要的数据结构准备好
 				c.prepare_reduce_input()
 				c.cond = Reduce
-				fmt.Printf("[coor] switch to reduce!\n")
+				coor_logger.info("[coor] switch to reduce!")
 			}
 		} else if c.cond == Reduce {
 			completed_task_seq := args.TaskSeq
@@ -191,7 +188,7 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 			c.reduce_outputs = append(c.reduce_outputs, out_file_path)
 			if len(c.reduce_inputs) == 0 && len(c.running_reduce_tasks) == 0 {
 				// 收集reduce所有输出，重新命名
-				fmt.Printf("[coor] switch to done!")
+				coor_logger.info("[coor] switch to done!")
 				c.cond = Done
 			}
 		}

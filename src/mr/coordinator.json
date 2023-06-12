@@ -1,0 +1,7 @@
+{
+    "Logger":{
+        "lever": "debug",
+        "logpath": "/Users/zhc/projects/6.5840/src/main/coordinate.log",
+        "prefix": "[COORDINATOR]"
+    }
+}

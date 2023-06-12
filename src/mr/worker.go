@@ -18,6 +18,8 @@ type KeyValue struct {
 	Value string
 }
 
+var woker_logger = NewLogger("/Users/zhc/projects/6.5840/src/mr/worker.json")
+
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
 func ihash(key string) int {
@@ -34,7 +36,7 @@ func CallForTask() (RepType, int, int, string, []string) {
 	if ok {
 		return reply.ReplayType, reply.TaskId, reply.NReduce, reply.FilePath, reply.ReduceInput
 	} else {
-		fmt.Printf("call failed!\n")
+		woker_logger.warn("call failed!")
 	}
 	return REQUEST_ERROR, 0, 0, "", []string{}
 }
@@ -43,18 +45,18 @@ func DoMap(file_path string, mapf func(string, string) []KeyValue) []KeyValue {
 	// file_name := filepath.Base(file_path)
 	file, err := os.Open(file_path)
 	if err != nil {
-		log.Fatalf("cannot open %v %s", file_path, err.Error())
+		woker_logger.Fatalf("cannot open %v %s", file_path, err.Error())
 	}
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Fatalf("cannot read %v", file_path)
+		woker_logger.Fatalf("cannot read %v", file_path)
 	}
 	kva := mapf(file_path, string(content))
-	fmt.Printf("[Worker][MAP]: %s map succ!\n", file_path)
+	woker_logger.info("%s map succ!", file_path)
 	return kva
 }
 
-func DoReduce(kvs []KeyValue, task_id int, reducef func(string, []string) string) string {
+func DoReduce(kvs []KeyValue, task_id int, reducef func(string, []string) string) (string, error) {
 	sort.Sort(ByKey(kvs))
 	ofilepath := fmt.Sprintf("./mr-out-%d", task_id)
 	tmpfile, _ := ioutil.TempFile(filepath.Dir(ofilepath), "reduce_*")
@@ -76,9 +78,16 @@ func DoReduce(kvs []KeyValue, task_id int, reducef func(string, []string) string
 		i = j
 	}
 	// todo: errprocess
-	os.Rename(tmpfile.Name(), ofilepath)
+	err := os.Rename(tmpfile.Name(), ofilepath)
+	if err != nil {
+		err2 := os.Remove(tmpfile.Name())
+		if err2 != nil {
+			return "", err2
+		}
+		return "", err
+	}
 	abs_opath, _ := filepath.Abs(ofilepath)
-	return abs_opath
+	return abs_opath, nil
 }
 
 func DoHashSplit(kvs []KeyValue, X int, nReduce int, file_dir string) ([]string, error) {
@@ -111,7 +120,7 @@ func ReportMapResult(task_id int, inter_outs []string) {
 	if ok {
 		// fmt.Printf("report success!\n")
 	} else {
-		fmt.Printf("call failed!\n")
+		woker_logger.warn("call failed!")
 	}
 }
 
@@ -122,7 +131,7 @@ func ReportReduceResult(task_id int, ofilepath string) {
 	if ok {
 		// fmt.Printf("[reduce] report success!\n")
 	} else {
-		fmt.Printf("[reduce] report failed!\n")
+		woker_logger.warn("[reduce] report failed!")
 	}
 }
 
@@ -142,15 +151,15 @@ Loop:
 			if err == nil {
 				ReportMapResult(task_id, inter_outs)
 			} else {
-				fmt.Printf("[worker][map] task id %d faild, do not report!\n", task_id)
+				woker_logger.warn("task id %d faild, do not report!", task_id)
 			}
 		case REDUCE:
-			fmt.Printf("[worker][reduce] start %d reduce task\n", task_id)
+			woker_logger.info("[reduce] start %d reduce task", task_id)
 			reduce_kvs := []KeyValue{}
 			for _, ri := range reduce_inputs {
 				kvs, err := ReadKVFromFile(ri)
 				if err != nil {
-					fmt.Printf("[REDUCE][ERR] file %s read faild!\n", ri)
+					woker_logger.warn("[REDUCE][ERR] file %s read faild!", ri)
 				} else {
 					reduce_kvs = append(reduce_kvs, kvs...)
 				}
@@ -159,7 +168,11 @@ Loop:
 				ReportReduceResult(task_id, "")
 				continue Loop
 			}
-			ofilepath := DoReduce(reduce_kvs, task_id, reducef)
+			ofilepath, err := DoReduce(reduce_kvs, task_id, reducef)
+			if err != nil {
+				fmt.Print(err)
+				continue Loop
+			}
 			for _, ri := range reduce_inputs {
 				os.Remove(ri)
 			}
