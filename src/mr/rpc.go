@@ -41,7 +41,7 @@ type ExampleReply struct {
 type RequestArgs struct {
 	RequestType ReqType
 	TaskSeq     int // REPORT_RESULT 时使用
-	Msg         string
+	Msg         []string
 }
 
 type Reply struct {

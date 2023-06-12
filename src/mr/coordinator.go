@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
-	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,10 +34,10 @@ type ReduceTask struct {
 	time_stamp int64
 }
 
-type MapOutput struct {
-	task_seq       int
-	map_output_dir string
-}
+// type MapOutput struct {
+// 	task_seq       int
+// 	map_output_dir string
+// }
 
 type Coordinator struct {
 	// Your definitions here.
@@ -45,7 +46,7 @@ type Coordinator struct {
 	nReduce               int
 	unsettled_files       []string
 	in_progress_map_tasks map[int]MapTask
-	map_outputs           []MapOutput
+	map_outputs           []string
 
 	// 先设置一个全局锁，优化可以搞一个更细粒度的锁。比如每个切片带一个锁
 	mutex sync.Mutex
@@ -67,20 +68,20 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func (c *Coordinator) get_timeout_filepath() (string, error) {
+func (c *Coordinator) get_timeout_filepath() (string, int, error) {
 	for task_seq, task := range c.in_progress_map_tasks {
-		if ns2s(time.Now().UnixNano()-task.time_stamp) > 15 {
+		if ns2s(time.Now().UnixNano()-task.time_stamp) > 10 {
 			// todo: 这里直接 delete 掉会不会导致task.filepath失效呢？先这样，有问题再排查
-			delete(c.in_progress_map_tasks, task_seq)
-			return task.file_path, nil
+			// delete(c.in_progress_map_tasks, task_seq)
+			return task.file_path, task_seq, nil
 		}
 	}
-	return "nil", errors.New("no time out tasks")
+	return "faild", -1, errors.New("no time out tasks")
 }
 
 func (c *Coordinator) get_timeout_task() ([]string, error) {
 	for task_seq, task := range c.running_reduce_tasks {
-		if ns2s(time.Now().UnixNano()-task.time_stamp) > 15 {
+		if ns2s(time.Now().UnixNano()-task.time_stamp) > 10 {
 			delete(c.running_reduce_tasks, task_seq)
 			return task.input, nil
 		}
@@ -90,34 +91,41 @@ func (c *Coordinator) get_timeout_task() ([]string, error) {
 
 func (c *Coordinator) prepare_reduce_input() {
 	for _, mout := range c.map_outputs {
-		for i := 0; i < c.nReduce; i += 1 {
-			mr_intermedia_path := filepath.Join(mout.map_output_dir, fmt.Sprintf("mr-out-%d-%d", mout.task_seq, i))
-			c.reduce_inputs[i] = append(c.reduce_inputs[i], mr_intermedia_path)
+		// for i := 0; i < c.nReduce; i += 1 {
+		// 	mr_intermedia_path := filepath.Join(mout.map_output_dir, fmt.Sprintf("mr-out-%d-%d", mout.task_seq, i))
+		// 	c.reduce_inputs[i] = append(c.reduce_inputs[i], mr_intermedia_path)
+		// }
+		t := strings.Split(mout, "-")
+		Y, err := strconv.Atoi(t[len(t)-1])
+		if err != nil {
+			// err process
 		}
+		c.reduce_inputs[Y] = append(c.reduce_inputs[Y], mout)
 	}
 }
 
 func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	if args.RequestType == REQ_TASK {
 		// 如果 unsettled_files 为空，那么遍历in_progress_map_tasks，从中找一个超时的交给worker
 		if c.cond == Map {
-			c.mutex.Lock()
-			defer c.mutex.Unlock()
 			var file_path string
+			var id int
 			if len(c.unsettled_files) > 0 {
 				// 倒序处理，理论上性能比较好
 				file_path = c.unsettled_files[len(c.unsettled_files)-1]
 				c.unsettled_files = c.unsettled_files[:len(c.unsettled_files)-1]
+				id = c.map_id
+				c.map_id += 1
 			} else {
 				var err error
-				file_path, err = c.get_timeout_filepath() //todo: 遍历正在进行列表，找出一个超时的。
+				file_path, id, err = c.get_timeout_filepath() //todo: 遍历正在进行列表，找出一个超时的。
 				if err != nil {
 					reply.ReplayType = WAIT
 					return nil
 				}
 			}
-			id := c.map_id
-			c.map_id += 1
 			time_stamp := time.Now().UnixNano()
 			task := MapTask{file_path, time_stamp}
 			c.in_progress_map_tasks[id] = task
@@ -127,8 +135,6 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 			reply.FilePath = file_path
 		} else if c.cond == Reduce {
 			// todo:reduce
-			c.mutex.Lock()
-			defer c.mutex.Unlock()
 			var reduce_input []string
 			if len(c.reduce_inputs) > 0 {
 				// 倒序处理，理论上性能比较好
@@ -157,8 +163,6 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 			return nil
 		}
 	} else if args.RequestType == REPORT_RESULT {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
 		if c.cond == Map {
 			completed_task_seq := args.TaskSeq
 			_, ok := c.in_progress_map_tasks[completed_task_seq]
@@ -166,10 +170,9 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 				// 说明报告的文件已经被删除了，此时不处理即可
 				return nil
 			}
-			out_file_path := args.Msg
+			out_file_paths := args.Msg
 			delete(c.in_progress_map_tasks, completed_task_seq)
-			taskout := MapOutput{completed_task_seq, out_file_path}
-			c.map_outputs = append(c.map_outputs, taskout)
+			c.map_outputs = append(c.map_outputs, out_file_paths...)
 			// 未处理文件和正在进行的文件没有了，说明map结束了
 			if len(c.unsettled_files) == 0 && len(c.in_progress_map_tasks) == 0 {
 				// 先将要的数据结构准备好
@@ -184,7 +187,7 @@ func (c *Coordinator) AssignTask(args *RequestArgs, reply *Reply) error {
 				return nil
 			}
 			delete(c.running_reduce_tasks, completed_task_seq)
-			out_file_path := args.Msg
+			out_file_path := args.Msg[0]
 			c.reduce_outputs = append(c.reduce_outputs, out_file_path)
 			if len(c.reduce_inputs) == 0 && len(c.running_reduce_tasks) == 0 {
 				// 收集reduce所有输出，重新命名
@@ -205,7 +208,7 @@ func (c *Coordinator) init(files []string, nReduce int) {
 	// 这里直接操作files数组，不需要深拷贝
 	c.unsettled_files = files
 	c.in_progress_map_tasks = make(map[int]MapTask)
-	c.map_outputs = []MapOutput{}
+	c.map_outputs = []string{}
 	c.nReduce = nReduce
 
 	// todo: reduce用的变量初始化
@@ -233,12 +236,10 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
-	if c.cond == Done {
-		ret = true
-	}
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
-	return ret
+	return c.cond == Done
 }
 
 // create a Coordinator.

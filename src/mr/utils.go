@@ -3,7 +3,10 @@ package mr
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 )
 
 type ByKey []KeyValue
@@ -18,18 +21,27 @@ func ns2s(t int64) int64 {
 }
 
 func WriteKV2File(kvs []KeyValue, file_path string) error {
-	ofile, err := os.Create(file_path)
+	file_dir := filepath.Dir(file_path)
+	tmpfile, err := ioutil.TempFile(file_dir, "tmp*")
+	defer tmpfile.Close()
+	if err != nil {
+		return err
+	}
+	// tmp_file_path := filepath.Join(file_dir, tmpfile.Name())
 	if err != nil {
 		return errors.New("output file create faild")
-	} else {
-		defer ofile.Close()
-		enc := json.NewEncoder(ofile)
-		for _, kv := range kvs {
-			// todo : err process
-			enc.Encode(&kv)
-		}
-		return nil
 	}
+	enc := json.NewEncoder(tmpfile)
+	for _, kv := range kvs {
+		// todo : err process
+		enc.Encode(&kv)
+	}
+	// 感觉需要加文件锁
+	err = os.Rename(tmpfile.Name(), file_path)
+	if err != nil {
+		fmt.Print("zhc--------" + err.Error() + "\n")
+	}
+	return err
 }
 
 func ReadKVFromFile(file_path string) ([]KeyValue, error) {

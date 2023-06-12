@@ -27,7 +27,7 @@ func ihash(key string) int {
 }
 
 func CallForTask() (RepType, int, int, string, []string) {
-	args := RequestArgs{REQ_TASK, 0, ""}
+	args := RequestArgs{REQ_TASK, 0, []string{}}
 	reply := Reply{}
 	ok := call("Coordinator.AssignTask", &args, &reply)
 	// todo: error process
@@ -57,7 +57,7 @@ func DoMap(file_path string, mapf func(string, string) []KeyValue) []KeyValue {
 func DoReduce(kvs []KeyValue, task_id int, reducef func(string, []string) string) string {
 	sort.Sort(ByKey(kvs))
 	ofilepath := fmt.Sprintf("./mr-out-%d", task_id)
-	ofile, _ := os.Create(ofilepath)
+	tmpfile, _ := ioutil.TempFile(filepath.Dir(ofilepath), "reduce_*")
 
 	i := 0
 	for i < len(kvs) {
@@ -71,18 +71,19 @@ func DoReduce(kvs []KeyValue, task_id int, reducef func(string, []string) string
 		}
 		output := reducef(kvs[i].Key, values)
 
-		fmt.Fprintf(ofile, "%v %v\n", kvs[i].Key, output)
+		fmt.Fprintf(tmpfile, "%v %v\n", kvs[i].Key, output)
 
 		i = j
 	}
 	// todo: errprocess
+	os.Rename(tmpfile.Name(), ofilepath)
 	abs_opath, _ := filepath.Abs(ofilepath)
 	return abs_opath
 }
 
-func DoHashSplit(kvs []KeyValue, X int, nReduce int, file_dir string) error {
+func DoHashSplit(kvs []KeyValue, X int, nReduce int, file_dir string) ([]string, error) {
+	outs := []string{}
 	out_X := make([][]KeyValue, nReduce)
-	// var Y int
 	for _, kv := range kvs {
 		Y := ihash(kv.Key) % nReduce
 		out_X[Y] = append(out_X[Y], kv)
@@ -91,17 +92,19 @@ func DoHashSplit(kvs []KeyValue, X int, nReduce int, file_dir string) error {
 	for Y := 0; Y < nReduce; Y += 1 {
 		if len(out_X[Y]) > 0 {
 			intermedia_output_file_name := fmt.Sprintf("mr-out-%d-%d", X, Y)
-			err := WriteKV2File(out_X[Y], filepath.Join(file_dir, intermedia_output_file_name))
+			inter_file_path := filepath.Join(file_dir, intermedia_output_file_name)
+			err := WriteKV2File(out_X[Y], inter_file_path)
 			if err != nil {
-				return err
+				return outs, err
 			}
+			outs = append(outs, inter_file_path)
 		}
 	}
-	return nil
+	return outs, nil
 }
 
-func ReportMapResult(task_id int, out_dir string) {
-	args := RequestArgs{REPORT_RESULT, task_id, out_dir}
+func ReportMapResult(task_id int, inter_outs []string) {
+	args := RequestArgs{REPORT_RESULT, task_id, inter_outs}
 	reply := Reply{}
 	ok := call("Coordinator.AssignTask", &args, &reply)
 	// todo: error process
@@ -113,7 +116,7 @@ func ReportMapResult(task_id int, out_dir string) {
 }
 
 func ReportReduceResult(task_id int, ofilepath string) {
-	args := RequestArgs{REPORT_RESULT, task_id, ofilepath}
+	args := RequestArgs{REPORT_RESULT, task_id, []string{ofilepath}}
 	reply := Reply{}
 	ok := call("Coordinator.AssignTask", &args, &reply)
 	if ok {
@@ -135,11 +138,11 @@ Loop:
 			intermediate := DoMap(file_path, mapf)
 			output_file_dir, _ := filepath.Abs("./")
 			// todo:错误处理
-			err := DoHashSplit(intermediate, task_id, nReduce, output_file_dir)
+			inter_outs, err := DoHashSplit(intermediate, task_id, nReduce, output_file_dir)
 			if err == nil {
-				ReportMapResult(task_id, output_file_dir)
+				ReportMapResult(task_id, inter_outs)
 			} else {
-				fmt.Printf("[map][reduce] task id %d faild, do not report!\n", task_id)
+				fmt.Printf("[worker][map] task id %d faild, do not report!\n", task_id)
 			}
 		case REDUCE:
 			fmt.Printf("[worker][reduce] start %d reduce task\n", task_id)
