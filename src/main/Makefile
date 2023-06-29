@@ -8,6 +8,8 @@ worker:
 
 clean:
 	rm -f mr-out-*
+	rm -f worker-*
+	rm -f coordinate-*
 
 test:
 	cat mr-out-* | sort | more
