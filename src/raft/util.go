@@ -2,8 +2,6 @@ package raft
 
 import (
 	"log"
-	"math/rand"
-	"time"
 )
 
 // Debugging
@@ -20,6 +18,6 @@ func Ms2Nano(ms int64) int64 {
 	return ms * 1000000
 }
 
-func NewTimestamp() int64 {
-	return time.Now().UnixNano() + Ms2Nano(TimeoutFixInterval+(rand.Int63()%500))
-}
+// func NewTimestamp() int64 {
+// 	return time.Now().UnixNano() + Ms2Nano(TimeoutFixInterval+(rand.Int63()%RandomRetryInterval))
+// }
