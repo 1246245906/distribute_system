@@ -169,24 +169,28 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
 	// 1. candidate 的lastLogterm  <  自身的Term，不支持
 	// 2. 已经投过票切投的不是现在申请的这个，也不支持
-	if args.LastLogTerm < rf.curTerm || (rf.votedFor != -1 && rf.votedFor != args.CandidateId) {
+	if args.Term < rf.curTerm || (args.Term == rf.curTerm && rf.votedFor != -1 && rf.votedFor != args.CandidateId) {
 		reply.VoteGranted = false
 		reply.Term = rf.curTerm
 		return
 	}
-	if args.LastLogTerm == rf.curTerm {
-		if args.LastLogIndex < rf.log[len(rf.log)-1].index {
-			reply.VoteGranted = false
-			reply.Term = rf.curTerm
-			return
-		}
+	LastLogTerm := rf.log[len(rf.log)-1].term
+	LastLogIndex := rf.log[len(rf.log)-1].index
+	if args.LastLogTerm < LastLogTerm || (args.LastLogTerm == LastLogTerm && args.LastLogIndex < LastLogIndex) {
+		reply.VoteGranted = false
+		reply.Term = rf.curTerm
+		return
 	}
+	DPrintf("server %d voting, vote %d, term is %d\n", rf.me, args.CandidateId, args.Term)
+	rf.votedFor = args.CandidateId
+	rf.curTerm = args.Term
+	rf.curState = raftStateFollower
+	rf.timeoutTimestamp = NewTimestamp()
 	reply.VoteGranted = true
 	reply.Term = rf.curTerm
-	// todo votedFor什么时候还原？
-	rf.votedFor = args.CandidateId
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -228,6 +232,7 @@ func (rf *Raft) kickOffVote() {
 	rf.timeoutTimestamp = NewTimestamp()
 	rf.curState = raftStateCandidate
 	rf.mu.Unlock()
+	DPrintf("server %d time out, kick off vote, term is %d\n", rf.me, rf.curTerm)
 
 	var votedNums int32 = 0
 	var agreedNums int32 = 0
@@ -240,7 +245,7 @@ func (rf *Raft) kickOffVote() {
 		if i != rf.me {
 			go func(i int) {
 				var reply RequestVoteReply
-				start := time.Now().UnixMilli()
+				// start := time.Now().UnixMilli()
 				ok := rf.sendRequestVote(i, &args, &reply) // 最慢什么时候返回呢？先假设比较快就返回了
 				// 什么时候返回不重要，如果超时了不要影响raft状态即可
 				if ok {
@@ -249,8 +254,7 @@ func (rf *Raft) kickOffVote() {
 						atomic.AddInt32(&agreedNums, 1)
 					}
 				} else {
-					end := time.Now().UnixMilli()
-					DPrintf("sendRequestVote RPC call faild, cost %dms\n", end-start)
+					// end := time.Now().UnixMilli()
 				}
 			}(i)
 		}
@@ -260,14 +264,19 @@ func (rf *Raft) kickOffVote() {
 		// 2n+1 个服务器需要n+1个同意，自己默认同意，所以还需要 (2n+1) / 2个同意
 		if atomic.LoadInt32(&agreedNums) >= int32(len(rf.peers)/2) {
 			rf.mu.Lock()
-			rf.curState = raftStateLeader
+			// 有没有可能等待期间变成follower？ 保险起见先加上
+			if rf.curState == raftStateCandidate {
+				rf.curState = raftStateLeader
+			}
 			rf.mu.Unlock()
-			DPrintf("server id %d become leader!\n", rf.me)
+			DPrintf("server id %d become leader! term is %d\n", rf.me, rf.curTerm)
+			if rf.curState == raftStateLeader {
+				rf.sendAppendEntries2All()
+			}
 			return
 		}
 		// 当所有人投完票或者超时了，直接返回
-		if (atomic.LoadInt32(&votedNums) >= int32(len(rf.peers)-1)) || (times >= 8) {
-			DPrintf("server id %d loss the leader election!\n", rf.me)
+		if (atomic.LoadInt32(&votedNums) >= int32(len(rf.peers)-1)) || (times >= 3) {
 			return
 		}
 		times += 1
@@ -321,26 +330,28 @@ func (rf *Raft) ticker() {
 
 		// Your code here (2A)
 		// Check if a leader election should be started.
-		if rf.curState == raftStateFollower || rf.curState == raftStateCandidate {
-			// var voteNums int32 = 0
+		// 		// 发起选举
+		// 		// 假设执行kickoffvote时，curstate变成leader该怎么办？
+		// 		// 也就是说：正准备执行kickOffVote时，上一轮选举成功了
+		// 		// 理论上第二轮选举开始后第一轮选举必须停止，或者说第一轮的
+		// 		// 结果不能影响第二轮。所以，添加超时机制，当选举时间超过
+		// 		// 400ms后，第一轮选举作废
+		switch rf.curState {
+		case raftStateCandidate:
 			if time.Now().UnixNano() > rf.timeoutTimestamp {
-				// 发起选举
-				// 假设执行kickoffvote时，curstate变成leader该怎么办？
-				// 也就是说：正准备执行kickOffVote时，上一轮选举成功了
-				// 理论上第二轮选举开始后第一轮选举必须停止，或者说第一轮的
-				// 结果不能影响第二轮。所以，添加超时机制，当选举时间超过
-				// 800ms后，第一轮选举作废
-				DPrintf("server %d kick off vote!\n", rf.me)
 				go rf.kickOffVote()
 			}
-		} else if rf.curState == raftStateLeader {
-			// todo
+		case raftStateFollower:
+			if time.Now().UnixNano() > rf.timeoutTimestamp {
+				go rf.kickOffVote()
+			}
+		case raftStateLeader:
 			rf.sendAppendEntries2All()
 		}
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		// ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(100) * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 
 	}
 }
@@ -363,13 +374,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.timeoutTimestamp = NewTimestamp()
+	// DPrintf("server %d received heartbeat! hold\n", rf.me)
 
 	if args.Term < rf.curTerm {
 		reply.Term = rf.curTerm
 		reply.Success = false
 		return
 	}
-	rf.curTerm = args.Term
+	rf.curState = raftStateFollower
+	if args.Term > rf.curTerm {
+		// term 修改应该和votedFor绑定
+		rf.curTerm = args.Term
+		rf.votedFor = -1
+	}
+
 	reply.Term = rf.curTerm
 	reply.Success = true
 }

@@ -17,7 +17,7 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 func Ms2Nano(ms int64) int64 {
-	return ms * 1000
+	return ms * 1000000
 }
 
 func NewTimestamp() int64 {
